@@ -9,11 +9,9 @@ todo:
     - separate plotting and calculation
 """
 
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from skimage import measure
 from skimage.measure import EllipseModel
 
 import gudhi
@@ -28,10 +26,10 @@ def main():
     density_slice = np.load('./data/density_files/densityslice_LCDM_15_007.npy')
     density_slice = np.log10(density_slice)
     
-    N = 256**2
     # work in pixel units
-    L = np.array([256,256])
-    box_L = np.array([300,300])
+    L = density_slice.shape
+    N = np.prod(L)
+    # box_L = np.array([300,300])
     periodic_dimensions = (True,True)
     
     # check whether field is non-degenerate
@@ -70,8 +68,8 @@ def main():
         ax.scatter(pers_list[dim][:,1],pers_list[dim][:,2],
                    c=color_dict[dim],label=r'Dimension %i'%dim)
     ax.legend()
-    ax.set_xlabel(r'Birth density $\log(\delta+1)$')
     ax.set_xlabel(r'Death density $\log(\delta+1)$')
+    ax.set_ylabel(r'Birth density $\log(\delta+1)$')
     
 
     # get void locations:
@@ -134,9 +132,6 @@ def main():
     wall_coordinates = void_list[:,2:4].astype(int)
     void_birth_death = void_list[:,4:6]
     
-    # transpose so that indices work nicely
-    # density_slice = density_slice.T
-    
     void_boundaries = []
     void_interiors = []
     mask_already_test = np.zeros(shape=density_slice.shape, dtype=bool)
@@ -168,7 +163,7 @@ def main():
                 boundary_list.append(pos)
         mask_already_test *= False
         void_interiors.append(np.array(interior_list))
-        # sort by angle towards for now
+        # sort by angle towards centre for now
         ika = np.argsort(np.arctan2(*(np.array(boundary_list) - void_centre).T))
         boundary_list = np.array(boundary_list)[ika]
         # differences = np.sum(np.diff(boundary_list,axis=0)**2,axis=1)
@@ -181,9 +176,6 @@ def main():
         #     differences = np.sum(np.diff(boundary_list,axis=0)**2,axis=1)
         void_boundaries.append(boundary_list)
     
-    # transpose back
-    # density_slice = density_slice.T
-    
     # ellipse fitting
     void_ellipse_list = []
     fig, ax = plt.subplots(1,1,figsize=(20,20))
@@ -193,13 +185,6 @@ def main():
         xv, yv = void[0], void[1] # void centre
         vw, yw = void[2], void[3] # void wall
         birth, death = void[4], void[5] # birth and death
-        # contour = [ c  for c in contours  if len(c) == np.max([ len(c) for c in contours ])][0]
-        # shift to centre, then shift back
-        # xy = EllipseModel().predict_xy(np.linspace(0, 2 * np.pi, 25),
-        #                                 params=(10, 15, 4, 8, np.deg2rad(30)))
-        # shift contour to centre to avoid boundary effects
-        # if np.min(contour) == 0 and np.max(contour) ==255:
-        #     break
         shift = [L1//2 - xv,L2//2 - yv]
         contour = (contour + shift)%(L1,L2)
         
@@ -216,18 +201,12 @@ def main():
                     a, b = b, a
                 xc, yc = np.array([xc, yc]) - shift
                 void_ellipse_list.append([xv, yv, vw, yw, birth, death, xc, yc, a, b, theta, res])
-                # ellipse_params_list.append(ellipse.params+[np.sum(np.abs(ellipse.residuals(contour)))])
-                
-                # void_ellipse_list.append(ellipse_params_list)
-                
-                # void_ellipse_list[-1] = void_ellipse_list[-1] + ellipse.params+[np.sum(np.abs(ellipse.residuals(contour)))]
-                # look at volume/surface difference
                 ax.scatter(*((contour-shift)%(L1,L2)).T,s=2)
                 ax.plot(*ellipse_points.T)
     ax.set_xlim(0,255)
     ax.set_ylim(0,255)
-    ax.xlabel(r'x')
-    ax.ylabel(r'y')
+    ax.set_xlabel(r'x')
+    ax.set_ylabel(r'y')
     
     void_ellipse_list = np.array(void_ellipse_list)
     # 0... void location x
@@ -244,11 +223,6 @@ def main():
     # 11...ellipse: residual
     
     # add parameter exploration
-
-    eccentricity = np.sqrt(1-(void_ellipse_list[:,9]/void_ellipse_list[:,8])**2)
-    persistence = void_ellipse_list[:,4]-void_ellipse_list[:,5]
-    
-    
     
     
 if __name__ == '__main__':
