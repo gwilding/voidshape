@@ -70,147 +70,186 @@ def main():
         ax.scatter(pers_list[dim][:,1],pers_list[dim][:,2],
                    c=color_dict[dim],label=r'Dimension %i'%dim)
     ax.legend()
-    ax.set_xlabel(r'Death density $\log(\delta+1)$')
     ax.set_xlabel(r'Birth density $\log(\delta+1)$')
+    ax.set_xlabel(r'Death density $\log(\delta+1)$')
     
 
     # get void locations:
-    # death of 1-cycle in decreasing superlevel , ie column 1
+    # birth of 1-cycle in decreasing superlevel , ie column 1
     
-    # max number of voids to use
+    # let's explore the voids and critical points
+    # select how many voids
     N = 500
     # calculate, and plot lines between void centre -> void saddle
-    plt.matshow(density_slice)
+    fig, ax = plt.subplots(1,1)
+    ax.matshow(density_slice)
+    #start with empty list
     void_list = []
-    for birth,death in zip(pers_list[1][:N,1],pers_list[1][:N,2]):
-        if birth > -np.inf:
-            loc_void = np.where(density_slice == birth)
-            loc_saddle = np.where(density_slice == death)
-            plt.scatter(loc_void[1],loc_void[0],marker='o',s=10,c='r')
-            plt.scatter(loc_saddle[1],loc_saddle[0],marker='x',s=10,c='g')
-            plt.plot([loc_void[1],loc_saddle[1]],[loc_void[0],loc_saddle[0]])
-            distance_temp = np.array([loc_saddle[0][0],loc_saddle[1][0]]) - np.array([loc_void[0][0],loc_void[1][0]])
-            distance_temp = np.sum(np.min([np.abs(distance_temp),np.abs(distance_temp-L)],0)**2)**0.5
-            void_list.append([loc_void[1][0],loc_void[0][0],death-birth,distance_temp])
+    # loop through all one-dimensional persistence pairs
+    # this signify the formation of a closed loop (=death) surrounding a void (at a saddle point)
+    # and the filling of the loop (=birth) at the centre of the void (at a minimum)
+    for death,birth in zip(pers_list[1][:N,1],pers_list[1][:N,2]):
+        # we want to exclude the two loops at infinite of the ambient space
+        if death > -np.inf:
+            # get locations (=indices) where the loop is born and dies
+            loc_void = np.where(density_slice == death)
+            loc_saddle = np.where(density_slice == birth)
+            
+            # also calculate the distance between the saddle point and the minimum
+            distance_raw = np.array([loc_saddle[0][0],loc_saddle[1][0]]) - np.array([loc_void[0][0],loc_void[1][0]])
+            # correct for periodicity (recheck this)
+            distance_temp = np.sum(np.min([np.abs(distance_raw),np.abs(distance_raw-L)],0)**2)**0.5
+            # store void centre in list
+            void_list.append([loc_void[1][0],loc_void[0][0],
+                              loc_saddle[1][0],loc_saddle[0][0],
+                              birth,
+                              death,
+                              distance_temp])
+            # add saddle point and minimum to plot
+            ax.scatter(loc_void[1],loc_void[0],marker='o',s=10,c='r')
+            ax.scatter(loc_saddle[1],loc_saddle[0],marker='x',s=10,c='xkcd:goldenrod')
+            # add connecting vector, but only of saddle point and central void minimum
+            # are NOT separated by an boundary of the box
+            if max(np.abs(distance_raw)) < min(L)/2:
+                ax.plot([loc_void[1],loc_saddle[1]],[loc_void[0],loc_saddle[0]])
     
-    # void_array = np.array(void_list)
+    void_list = np.array(void_list)
     
     # fill voids
+    # we essentially use a watershed algorithm to flood the voids
+    # starting from the centre, and upto a certain threshold
     
     L1,L2 = density_slice.shape
     # select voids from the sorted list of persistence values
     # void 0 and 1 do not work
-    N_select_list = np.mgrid[2:200]#np.mgrid[30]
+    N = 200
     
     # fraction of (density_saddle-density_centre) upto which to fill
     # this determines the interior cells of the void
-    threshold_fraction = 0.85
+    threshold_factor = 0
+    # the neighbouring cells, no diagonal connection
+    neighbours = [(0,1),(0,-1),(1,0),(-1,0)]#(1,1),(1,-1),(-1,-1),(-1,1)]
     
+    void_coordinates = void_list[:,:2].astype(int)
+    wall_coordinates = void_list[:,2:4].astype(int)
+    void_birth_death = void_list[:,4:6]
+    
+    # transpose so that indices work nicely
+    # density_slice = density_slice.T
+    
+    void_boundaries = []
+    void_interiors = []
+    mask_already_test = np.zeros(shape=density_slice.shape, dtype=bool)
+    for void_centre, wall, (birth, death) in zip(tqdm(void_coordinates),wall_coordinates,void_birth_death):
+        # fill from the centre (void) to th wall (wall)
+        neighbours = np.array([(0,1),(0,-1),(1,0),(-1,0)])
+        threshold = birth - (birth - death)*threshold_factor
+        
+        interior_list = []
+        boundary_list = []
+        test_positions = [void_centre]
+
+        while len(test_positions):
+            # always test and remove first position in array
+            pos = test_positions.pop(0)
+            mask_already_test[pos[1],pos[0]] = True
+            neighbour_cells = (pos + neighbours)%(L1,L2)
+            # neighbour_cells = pos + neighbours
+            neighbour_cells = [n for n in neighbour_cells if not mask_already_test[n[1],n[0]]]
+            if all([density_slice[n[1],n[0]] < threshold for n in neighbour_cells]):
+                # all surrounding cells below threshold: add to interior
+                interior_list.append(pos)
+                # extend test list with cells that have not been tested
+                for new_pos in neighbour_cells:
+                    mask_already_test[new_pos[1],new_pos[0]] = 1
+                    test_positions.append(new_pos)
+            elif density_slice[pos[1],pos[0]] < threshold:   
+                # not all surrounding cells below threshold: add to boundary
+                boundary_list.append(pos)
+        mask_already_test *= False
+        void_interiors.append(np.array(interior_list))
+        # sort by angle towards for now
+        ika = np.argsort(np.arctan2(*(np.array(boundary_list) - void_centre).T))
+        boundary_list = np.array(boundary_list)[ika]
+        # differences = np.sum(np.diff(boundary_list,axis=0)**2,axis=1)
+        # while any(differences > 2):
+        #     changes = np.where(differences > 2)[0]
+        #     pick = changes[np.random.randint(len(changes))]
+        #     exchange = boundary_list[pick].copy()
+        #     boundary_list[pick] = boundary_list[pick-1].copy()
+        #     boundary_list[pick-1] = exchange
+        #     differences = np.sum(np.diff(boundary_list,axis=0)**2,axis=1)
+        void_boundaries.append(boundary_list)
+    
+    # transpose back
+    # density_slice = density_slice.T
+    
+    # ellipse fitting
     void_ellipse_list = []
-    ellipse_params_list = []
-    void_boundary_point_list = []
-    
-    # separate plotting and calculation
-    fig, ax = plt.subplots(1,3,figsize=(10,5), sharex=True,sharey=True,
-                       gridspec_kw = {'wspace':0.05, 'hspace':0.0})
-    mask_all = np.zeros(shape=density_slice.shape).astype(int)
-    ax[0].matshow(density_slice)
-    ax[1].matshow(density_slice*mask_all)
-    # ax[2].contour(mask)
-    for N_select in tqdm(N_select_list):
-        mask = np.zeros(shape=density_slice.shape).astype(int)
-        birth,death=pers_list[1][N_select,1],pers_list[1][N_select,2]
-        if birth > -np.inf:
-            loc_void = np.where(density_slice == birth)
-            loc_saddle = np.where(density_slice == death)
-            ax[0].scatter(loc_void[1],loc_void[0],marker='o',s=10,c='r')
-            ax[0].scatter(loc_saddle[1],loc_saddle[0],marker='x',s=10,c='g')
-            ax[0].plot([loc_void[1],loc_saddle[1]],[loc_void[0],loc_saddle[0]])
-            distance_temp = np.array([loc_saddle[0][0],loc_saddle[1][0]]) - np.array([loc_void[0][0],loc_void[1][0]])
-            distance_temp = np.sum(np.min([np.abs(distance_temp),np.abs(distance_temp-L)],0)**2)**0.5
-            void_ellipse_list.append([loc_void[1][0],loc_void[0][0],loc_saddle[1][0],loc_saddle[0][0],death-birth,distance_temp])
-        mask[loc_void[0],loc_void[1]]=1
-        ax[1].matshow(density_slice*mask)
-        frame = max(np.abs(loc_saddle[0]-loc_void[0]),np.abs(loc_saddle[1]-loc_void[1]))*2
-        ax[0].set_xlim(loc_void[1]-frame, loc_void[1]+frame)
-        ax[0].set_ylim(loc_void[0]-frame, loc_void[0]+frame)
-        ax[1].set_xlim(loc_void[1]-frame, loc_void[1]+frame)
-        ax[1].set_ylim(loc_void[0]-frame, loc_void[0]+frame)
-        ax[2].set_xlim(loc_void[1]-frame, loc_void[1]+frame)
-        ax[2].set_ylim(loc_void[0]-frame, loc_void[0]+frame)
-        change = True
-        threshold = density_slice[loc_saddle]-(1-threshold_fraction)*np.abs(density_slice[loc_saddle] - density_slice[loc_void])
-        ax[1].set_title(threshold[0])
-        positions = [loc_void]
-        neighbours = [(0,1),(0,-1),(1,0),(-1,0)]#(1,1),(1,-1),(-1,-1),(-1,1)]
-        while change:
-            new_pos = positions.copy()
-            for pos in new_pos:
-                for n in neighbours:
-                    # if density_slice[pos[0]+n[0],pos[1]+n[1]] < threshold and mask[pos[0]+n[0],pos[1]+n[1]] == 0:
-                    if (np.roll(np.roll(density_slice,-n[0],axis=0),-n[1],axis=1)[pos] <= threshold and 
-                        np.roll(np.roll(mask,-n[0],axis=0),-n[1],axis=1)[pos] == 0):
-                        
-                        new_pos.append(( (pos[0]+n[0])%L1,(pos[1]+n[1])%L2 ))
-                        mask[ (pos[0]+n[0])%L1,(pos[1]+n[1])%L2 ] += 1
-                        # print("add")
-            positions += new_pos
-            new_pos = []
-            if len(new_pos) == 0:
-                change = False
-            ax[1].matshow(mask)
-            # ax[2].contour(mask*density_slice)
-        mask_all |= mask
-        pos_array = np.array([[p[0][0]-loc_void[0][0], p[1][0]-loc_void[1][0] ] for p in positions])
-        # center the mask and field, so that contours don't cut the boundary:
-        # shift = pos_array.min(0)*(np.abs(pos_array.min(0))>np.abs(pos_array.max(0)))//2
-        shift = [L1//2 - loc_void[0][0],L2//2 - loc_void[1][0]]
-        # contour_field_1 = mask*density_slice
-        contour_field = np.roll(np.roll(mask*density_slice,shift[0],axis=0),shift[1],axis=1)
-        contours = measure.find_contours(contour_field, threshold)
-        lower_threshold = 0
-        while len(contours) == 0:
-            contours = measure.find_contours(contour_field, threshold-abs(threshold)*lower_threshold)
-            lower_threshold += 0.01
-        contours = [ c-shift for c in contours]
-        # select longest contour (assuming this is the one surrounging everything ??)
-        contour = [ c  for c in contours  if len(c) == np.max([ len(c) for c in contours ])][0]
-        ax[2].plot(contour[:,1],contour[:,0])
+    fig, ax = plt.subplots(1,1,figsize=(20,20))
+    ax.matshow(density_slice)
+    # for contour, void_centre in zip(tqdm(void_boundaries),void_coordinates):
+    for contour, void in zip(tqdm(void_boundaries),void_list):
+        xv, yv = void[0], void[1] # void centre
+        vw, yw = void[2], void[3] # void wall
+        birth, death = void[4], void[5] # birth and death
+        # contour = [ c  for c in contours  if len(c) == np.max([ len(c) for c in contours ])][0]
+        # shift to centre, then shift back
         # xy = EllipseModel().predict_xy(np.linspace(0, 2 * np.pi, 25),
         #                                 params=(10, 15, 4, 8, np.deg2rad(30)))
-        ellipse = EllipseModel()
-        if ellipse.estimate(contour):
-            # abs(ellipse.residuals(contour))
-            ellipse_points = ellipse.predict_xy(np.linspace(0,2*np.pi))
-            ellipse_params_list.append(ellipse.params+[np.sum(np.abs(ellipse.residuals(contour)))])
-            void_ellipse_list[-1] = void_ellipse_list[-1] + ellipse.params+[np.sum(np.abs(ellipse.residuals(contour)))]
-            # look at volume/surface difference
-            ax[2].plot(ellipse_points[:,1],ellipse_points[:,0])
-    ax[1].matshow(density_slice*mask_all)
-    ax[0].set_xlim(0,256)
-    ax[0].set_ylim(0,256)
-    # ax[1].set_xlim(loc_void[1]-frame, loc_void[1]+frame)
-    # ax[1].set_ylim(loc_void[0]-frame, loc_void[0]+frame)
-    ax[2].set_xlim(0,256)
-    ax[2].set_ylim(0,256)
-    ax[2].set_aspect(1)
+        # shift contour to centre to avoid boundary effects
+        # if np.min(contour) == 0 and np.max(contour) ==255:
+        #     break
+        shift = [L1//2 - xv,L2//2 - yv]
+        contour = (contour + shift)%(L1,L2)
+        
+        if len(contour) > 5:
+            ellipse = EllipseModel()
+            if ellipse.estimate(contour):
+                # abs(ellipse.residuals(contour))
+                # get points of the fit ellipse
+                ellipse_points = ellipse.predict_xy(np.linspace(0,2*np.pi)) - shift
+                res = np.sum(np.abs(ellipse.residuals(contour)))
+                # store ellipse parameters, including the sum of residuals (goodness of fit)
+                xc, yc, a, b, theta =  ellipse.params
+                if a < b:
+                    a, b = b, a
+                xc, yc = np.array([xc, yc]) - shift
+                void_ellipse_list.append([xv, yv, vw, yw, birth, death, xc, yc, a, b, theta, res])
+                # ellipse_params_list.append(ellipse.params+[np.sum(np.abs(ellipse.residuals(contour)))])
+                
+                # void_ellipse_list.append(ellipse_params_list)
+                
+                # void_ellipse_list[-1] = void_ellipse_list[-1] + ellipse.params+[np.sum(np.abs(ellipse.residuals(contour)))]
+                # look at volume/surface difference
+                ax.scatter(*((contour-shift)%(L1,L2)).T,s=2)
+                ax.plot(*ellipse_points.T)
+    ax.set_xlim(0,255)
+    ax.set_ylim(0,255)
+    ax.xlabel(r'x')
+    ax.ylabel(r'y')
     
-    ellipse_params_list = np.array(ellipse_params_list)
     void_ellipse_list = np.array(void_ellipse_list)
     # 0... void location x
     # 1... void location y
     # 2... saddle location x
     # 3... saddle location y
-    # 2... void persistence (log)
-    # 3... distance void - saddle
-    # 4... ellipse: xc
-    # 5... ellipse: yc
-    # 6... ellipse: a
-    # 7... ellipse: b
-    # 8... ellipse: theta
-    # 9... ellipse: residual
+    # 4... birth
+    # 5... death
+    # 6... ellipse: xc
+    # 7... ellipse: yc
+    # 8... ellipse: a
+    # 9... ellipse: b
+    # 10...ellipse: theta
+    # 11...ellipse: residual
     
     # add parameter exploration
+
+    eccentricity = np.sqrt(1-(void_ellipse_list[:,9]/void_ellipse_list[:,8])**2)
+    persistence = void_ellipse_list[:,4]-void_ellipse_list[:,5]
+    
+    
+    
     
 if __name__ == '__main__':
     main()
