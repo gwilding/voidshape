@@ -1,4 +1,4 @@
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/gwilding/voidshape/HEAD?labpath=void_exploration_2d)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/gwilding/voidshape/HEAD?labpath=void_exploration_2d.ipynb)
 
 # Exploring voids and their shapes using TDA
 
